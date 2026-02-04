@@ -1,0 +1,14 @@
+def validate_symbol(symbol: str) -> bool:
+    return len(symbol) >= 5 and "USDT" in symbol.upper()
+
+def validate_positive_float(value: str) -> float:
+    val = float(value)
+    if val <= 0:
+        raise ValueError("Value must be positive.")
+    return val
+
+def validate_callback_rate(value: str) -> float:
+    val = float(value)
+    if not (0.1 <= val <= 5.0):
+        raise ValueError("Callback rate must be between 0.1 and 5.0.")
+    return val
