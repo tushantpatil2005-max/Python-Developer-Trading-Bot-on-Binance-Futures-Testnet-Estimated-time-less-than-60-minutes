@@ -1,0 +1,43 @@
+import os
+from binance.client import Client
+from binance.exceptions import BinanceAPIException
+import logging
+
+class BinanceFuturesClient:
+    def __init__(self):
+        self.api_key = os.getenv('BINANCE_API_KEY')
+        self.api_secret = os.getenv('BINANCE_API_SECRET')
+        self.logger = logging.getLogger("TradingBot.Client")
+
+        if not self.api_key or not self.api_secret:
+            raise ValueError("API Key and Secret must be provided in environment variables.")
+
+        # Initialize client for Testnet
+        self.client = Client(self.api_key, self.api_secret, testnet=True)
+        
+    def place_futures_order(self, symbol, side, order_type, quantity, price=None):
+        try:
+            params = {
+                'symbol': symbol.upper(),
+                'side': side.upper(),
+                'type': order_type.upper(),
+                'quantity': quantity,
+            }
+
+            if order_type.upper() == 'LIMIT':
+                if not price:
+                    raise ValueError("Price is required for LIMIT orders.")
+                params['price'] = price
+                params['timeInForce'] = 'GTC'  # Good 'Til Cancelled
+
+            self.logger.info(f"Sending Request: {params}")
+            response = self.client.futures_create_order(**params)
+            self.logger.info(f"API Response: {response}")
+            return response
+
+        except BinanceAPIException as e:
+            self.logger.error(f"Binance API Error: {e.message} (Code: {e.code})")
+            raise
+        except Exception as e:
+            self.logger.error(f"Unexpected Error: {str(e)}")
+            raise
