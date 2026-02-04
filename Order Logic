@@ -1,0 +1,30 @@
+import logging
+from binance.exceptions import BinanceAPIException
+
+logger = logging.getLogger("TradingBot")
+
+class OrderManager:
+    def __init__(self, client):
+        self.client = client
+
+    def place_futures_order(self, symbol, side, order_type, quantity, **kwargs):
+        try:
+            params = {
+                'symbol': symbol.upper(),
+                'side': side.upper(),
+                'type': order_type.upper(),
+                'quantity': quantity,
+            }
+            params.update(kwargs)
+
+            logger.info(f"Attempting {order_type} Order: {params}")
+            response = self.client.futures_create_order(**params)
+            logger.info(f"Order Successful. ID: {response.get('orderId')}")
+            return response
+            
+        except BinanceAPIException as e:
+            logger.error(f"Binance API Error: {e.message}")
+            raise
+        except Exception as e:
+            logger.error(f"Internal Error: {str(e)}")
+            raise
