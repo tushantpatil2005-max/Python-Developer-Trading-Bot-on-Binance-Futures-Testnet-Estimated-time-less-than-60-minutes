@@ -1,0 +1,169 @@
+import os
+import sys
+import logging
+import json
+from datetime import datetime
+from dotenv import load_dotenv
+from binance.client import Client
+from binance.exceptions import BinanceAPIException
+
+# --- LOGGING CONFIGURATION ---
+def setup_logging():
+    if not os.path.exists("logs"):
+        os.makedirs("logs")
+    
+    logger = logging.getLogger("TradingBot")
+    logger.setLevel(logging.INFO)
+    
+    file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    file_handler = logging.FileHandler(f"logs/trading_bot_{datetime.now().strftime('%Y%m%d')}.log")
+    file_handler.setFormatter(file_formatter)
+    
+    # Console handler for real-time feedback
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter('%(message)s'))
+    
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    return logger
+
+logger = setup_logging()
+
+# --- API CLIENT LAYER ---
+class BinanceFuturesClient:
+    def __init__(self):
+        load_dotenv()
+        self.api_key = os.getenv('BINANCE_API_KEY', '')
+        self.api_secret = os.getenv('BINANCE_API_SECRET', '')
+        
+        if not self.api_key or not self.api_secret:
+            logger.error("Credentials missing. Ensure .env has BINANCE_API_KEY and BINANCE_API_SECRET.")
+            sys.exit(1)
+
+        # Initialize for Testnet
+        self.client = Client(self.api_key, self.api_secret, testnet=True)
+
+    def place_order(self, symbol, side, order_type, quantity, price=None, stop_price=None):
+        try:
+            params = {
+                'symbol': symbol.upper(),
+                'side': side.upper(),
+                'type': order_type.upper(),
+                'quantity': quantity,
+            }
+
+            if order_type.upper() == 'LIMIT':
+                params['price'] = str(price)
+                params['timeInForce'] = 'GTC'
+            
+            elif order_type.upper() == 'STOP_LIMIT':
+                # Binance Futures uses STOP or STOP_MARKET usually, 
+                # but for STOP_LIMIT we need specific parameters
+                params['type'] = 'STOP'
+                params['price'] = str(price)
+                params['stopPrice'] = str(stop_price)
+                params['timeInForce'] = 'GTC'
+
+            logger.info(f"--- OUTGOING REQUEST ---")
+            logger.info(f"Method: POST | Params: {params}")
+            
+            response = self.client.futures_create_order(**params)
+            
+            logger.info(f"--- API RESPONSE SUCCESS ---")
+            logger.info(json.dumps(response, indent=2))
+            return response
+
+        except BinanceAPIException as e:
+            logger.error(f"--- API ERROR ---")
+            logger.error(f"Code: {e.code} | Message: {e.message}")
+            raise
+        except Exception as e:
+            logger.error(f"--- SYSTEM ERROR ---")
+            logger.error(str(e))
+            raise
+
+# --- ENHANCED CLI UX LAYER ---
+def clear_screen():
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+def print_header():
+    print("=" * 50)
+    print("      BINANCE FUTURES TESTNET BOT (PRO)      ")
+    print("=" * 50)
+
+def get_input(prompt, validator=None, default=None):
+    while True:
+        value = input(f"{prompt} {f'[{default}]' if default else ''}: ").strip() or default
+        if not value:
+            print("  ! Input cannot be empty.")
+            continue
+        if validator:
+            try:
+                if validator(value): return value
+            except Exception as e:
+                print(f"  ! Invalid input: {str(e)}")
+                continue
+        else:
+            return value
+
+def main_menu():
+    bot = BinanceFuturesClient()
+    
+    while True:
+        clear_screen()
+        print_header()
+        print("1. Place Market Order")
+        print("2. Place Limit Order")
+        print("3. Place Stop-Limit Order (New)")
+        print("4. Exit")
+        
+        choice = input("\nSelect an option: ")
+        
+        if choice == '4':
+            break
+            
+        if choice not in ['1', '2', '3']:
+            continue
+
+        # Shared Inputs
+        symbol = get_input("Enter Symbol (e.g., BTCUSDT)", default="BTCUSDT").upper()
+        side = get_input("Side (BUY/SELL)", validator=lambda x: x.upper() in ['BUY', 'SELL']).upper()
+        qty = get_input("Quantity", validator=lambda x: float(x) > 0)
+        
+        order_type = ""
+        price = None
+        stop_price = None
+
+        if choice == '1':
+            order_type = 'MARKET'
+        elif choice == '2':
+            order_type = 'LIMIT'
+            price = get_input("Limit Price", validator=lambda x: float(x) > 0)
+        elif choice == '3':
+            order_type = 'STOP_LIMIT'
+            stop_price = get_input("Stop Price (Trigger)", validator=lambda x: float(x) > 0)
+            price = get_input("Limit Price (Execution)", validator=lambda x: float(x) > 0)
+
+        print("\nReviewing Order...")
+        print(f"  {side} {qty} {symbol} @ {order_type}")
+        if price: print(f"  Execution Price: {price}")
+        if stop_price: print(f"  Stop Trigger: {stop_price}")
+        
+        confirm = input("\nConfirm Order? (y/n): ").lower()
+        if confirm == 'y':
+            try:
+                res = bot.place_order(symbol, side, order_type, qty, price, stop_price)
+                print(f"\n[SUCCESS] Order ID: {res['orderId']} | Status: {res['status']}")
+            except Exception:
+                print("\n[FAILED] Check logs/ directory for details.")
+        else:
+            print("\nOrder Cancelled.")
+            
+        input("\nPress Enter to return to menu...")
+
+if __name__ == "__main__":
+    try:
+        main_menu()
+    except KeyboardInterrupt:
+        print("\nExiting...")
+        sys.exit(0)
