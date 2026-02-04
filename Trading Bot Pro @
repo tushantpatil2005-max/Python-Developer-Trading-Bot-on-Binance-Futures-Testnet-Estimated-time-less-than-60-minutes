@@ -1,0 +1,177 @@
+import os
+import sys
+import logging
+import json
+from datetime import datetime
+from typing import Optional, Dict, Any
+from dotenv import load_dotenv
+from binance.client import Client
+from binance.exceptions import BinanceAPIException
+
+# --- LOGGING CONFIGURATION ---
+def setup_logging():
+    if not os.path.exists("logs"):
+        os.makedirs("logs")
+    
+    logger = logging.getLogger("TradingBot")
+    logger.setLevel(logging.INFO)
+    
+    # Detailed log for file
+    file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    log_filename = f"logs/trading_bot_{datetime.now().strftime('%Y%m%d')}.log"
+    file_handler = logging.FileHandler(log_filename)
+    file_handler.setFormatter(file_formatter)
+    
+    # Concise log for console
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter('\n[%(levelname)s] %(message)s'))
+    
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    return logger
+
+logger = setup_logging()
+
+# --- API CLIENT LAYER ---
+class BinanceFuturesClient:
+    """Handles all direct interactions with the Binance Futures Testnet."""
+    
+    def __init__(self):
+        load_dotenv()
+        self.api_key = os.getenv('BINANCE_API_KEY')
+        self.api_secret = os.getenv('BINANCE_API_SECRET')
+        
+        if not self.api_key or not self.api_secret:
+            logger.error("API credentials missing in .env file.")
+            sys.exit(1)
+
+        # Initialize for Testnet
+        self.client = Client(self.api_key, self.api_secret, testnet=True)
+
+    def place_order(self, 
+                    symbol: str, 
+                    side: str, 
+                    order_type: str, 
+                    quantity: float, 
+                    price: Optional[float] = None, 
+                    callback_rate: Optional[float] = None) -> Dict[str, Any]:
+        """
+        Generic order placement method supporting MARKET, LIMIT, and TRAILING_STOP_MARKET.
+        """
+        try:
+            params = {
+                'symbol': symbol.upper(),
+                'side': side.upper(),
+                'quantity': quantity,
+            }
+
+            if order_type == 'MARKET':
+                params['type'] = 'MARKET'
+            
+            elif order_type == 'LIMIT':
+                params['type'] = 'LIMIT'
+                params['price'] = str(price)
+                params['timeInForce'] = 'GTC'
+            
+            elif order_type == 'TRAILING_STOP_MARKET':
+                params['type'] = 'TRAILING_STOP_MARKET'
+                params['callbackRate'] = str(callback_rate) # e.g. 1.0 for 1%
+            
+            logger.info(f">>> SENDING {order_type} REQUEST: {params}")
+            response = self.client.futures_create_order(**params)
+            logger.info(f"<<< API RESPONSE SUCCESS: {json.dumps(response)}")
+            return response
+
+        except BinanceAPIException as e:
+            logger.error(f"API ERROR: {e.code} - {e.message}")
+            raise
+        except Exception as e:
+            logger.error(f"UNEXPECTED ERROR: {str(e)}")
+            raise
+
+# --- ENHANCED CLI UX LAYER ---
+class TradingBotCLI:
+    def __init__(self):
+        self.bot = BinanceFuturesClient()
+
+    def clear(self):
+        os.system('cls' if os.name == 'nt' else 'clear')
+
+    def get_valid_input(self, prompt, type_func=str, condition=lambda x: True, error_msg="Invalid input"):
+        while True:
+            val = input(f"{prompt}: ").strip()
+            try:
+                converted = type_func(val)
+                if condition(converted):
+                    return converted
+                print(f" Error: {error_msg}")
+            except ValueError:
+                print(f" Error: Must be a {type_func.__name__}")
+
+    def run(self):
+        while True:
+            self.clear()
+            print("="*50)
+            print("   BINANCE FUTURES TESTNET TRADING BOT")
+            print("="*50)
+            print("1. [MARKET] Instant Order")
+            print("2. [LIMIT] Specific Price Order")
+            print("3. [TRAILING STOP] Follow Market Trend")
+            print("4. Exit")
+            print("-" * 50)
+            
+            choice = input("Select order type (1-4): ")
+            
+            if choice == '4':
+                print("Goodbye!")
+                break
+            
+            if choice not in ['1', '2', '3']:
+                continue
+
+            # Universal Inputs
+            symbol = self.get_valid_input("Symbol (e.g. BTCUSDT)", str, lambda x: len(x) > 4)
+            side = self.get_valid_input("Side (BUY/SELL)", str, lambda x: x.upper() in ['BUY', 'SELL']).upper()
+            qty = self.get_valid_input("Quantity", float, lambda x: x > 0, "Quantity must be > 0")
+
+            # Specific Inputs
+            price = None
+            callback = None
+            order_type = ""
+
+            if choice == '1':
+                order_type = 'MARKET'
+            elif choice == '2':
+                order_type = 'LIMIT'
+                price = self.get_valid_input("Limit Price", float, lambda x: x > 0)
+            elif choice == '3':
+                order_type = 'TRAILING_STOP_MARKET'
+                callback = self.get_valid_input("Callback Rate (0.1 to 5.0 %)", float, lambda x: 0.1 <= x <= 5.0)
+
+            # Confirmation
+            print(f"\n--- CONFIRM ORDER ---")
+            print(f"Pair: {symbol} | Side: {side} | Qty: {qty} | Type: {order_type}")
+            if price: print(f"Price: {price}")
+            if callback: print(f"Callback Rate: {callback}%")
+            
+            confirm = input("\nExecute Order? (y/n): ").lower()
+            if confirm == 'y':
+                try:
+                    res = self.bot.place_order(symbol, side, order_type, qty, price, callback)
+                    print(f"\n✅ SUCCESS!")
+                    print(f"Order ID: {res.get('orderId')}")
+                    print(f"Status:   {res.get('status')}")
+                except Exception as e:
+                    print(f"\n❌ FAILED: {str(e)}")
+            else:
+                print("\nOrder aborted by user.")
+            
+            input("\nPress Enter to return to menu...")
+
+if __name__ == "__main__":
+    try:
+        cli = TradingBotCLI()
+        cli.run()
+    except KeyboardInterrupt:
+        print("\nProcess interrupted. Exiting...")
+        sys.exit(0)
