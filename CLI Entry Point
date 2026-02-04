@@ -1,0 +1,53 @@
+import click
+import sys
+from dotenv import load_dotenv
+from client import BinanceFuturesClient
+from logging_config import setup_logging
+
+# Load environment variables
+load_dotenv()
+logger = setup_logging()
+
+@click.command()
+@click.option('--symbol', required=True, help='Trading pair (e.g., BTCUSDT)')
+@click.option('--side', type=click.Choice(['BUY', 'SELL'], case_sensitive=False), required=True)
+@click.option('--type', 'order_type', type=click.Choice(['MARKET', 'LIMIT'], case_sensitive=False), required=True)
+@click.option('--quantity', type=float, required=True, help='Order quantity')
+@click.option('--price', type=float, help='Price (Required for LIMIT orders)')
+def main(symbol, side, order_type, quantity, price):
+    """Simple Trading Bot CLI for Binance Futures Testnet."""
+    
+    logger.info("--- New Order Request ---")
+    logger.info(f"Params: Symbol={symbol}, Side={side}, Type={order_type}, Qty={quantity}, Price={price}")
+
+    try:
+        bot_client = BinanceFuturesClient()
+        
+        # Validation for LIMIT order price
+        if order_type.upper() == 'LIMIT' and not price:
+            click.secho("Error: Price is required for LIMIT orders.", fg='red')
+            sys.exit(1)
+
+        response = bot_client.place_futures_order(
+            symbol=symbol,
+            side=side,
+            order_type=order_type,
+            quantity=quantity,
+            price=price
+        )
+
+        # Output Summary
+        click.secho("\n✅ Order Placed Successfully!", fg='green', bold=True)
+        click.echo(f"Order ID:      {response.get('orderId')}")
+        click.echo(f"Status:        {response.get('status')}")
+        click.echo(f"Executed Qty:  {response.get('executedQty')}")
+        click.echo(f"Avg Price:     {response.get('avgPrice', 'N/A')}")
+        click.echo("-" * 25)
+
+    except Exception as e:
+        click.secho(f"\n❌ Order Failed", fg='red', bold=True)
+        click.echo(f"Reason: {str(e)}")
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()
